@@ -1,24 +1,25 @@
 <?php
 /*
  Plugin Name:  Elasticpress Autosuggest Endpoint
- Plugin URI:   https://github.com/grossherr/elasticpress-autosuggest-endpoint
+ Plugin URI:   https://github.com/amanank/elasticpress-autosuggest-endpoint
  Description:  Basic WordPress Plugin Header Comment
- Version:      0.3
- Author:       Nicolai
- Author URI:   https://ngcorp.de/
+ Version:      0.4
+ Author:       Atta Khalid
  License:      GPL2
  License URI:  https://www.gnu.org/licenses/gpl-2.0.html
  */
 
-/**
- * Load Elasticseach PHP Client
+/** 
+ * Hook to override elasticpress exposing the entire elastic search query to the client.
+ * Only the search text is required from teh client
  */
-require 'vendor/autoload.php';
+function endpoint_ep_autosuggest_options($options) {
+    $options['query'] = '{"q":"'.$options['placeholder'].'"}';
+    return $options;
+}
+add_filter('ep_autosuggest_options', 'endpoint_ep_autosuggest_options', 10, 1);
 
-/**
- * Init Elasticsearch PHP Client
- */
-use Elasticsearch\ClientBuilder;
+
 
 /**
  * Register Elasticpress Autosuggest Endpoint
@@ -33,6 +34,7 @@ add_action( 'rest_api_init', function() {
 	] );
 } );
 
+
 /**
  * Elasticpress Autosuggest Endpoint Callback
  *
@@ -44,14 +46,23 @@ add_action( 'rest_api_init', function() {
  * @return array|callable
  */
 function ep_autosuggest( \WP_REST_Request $data ) {
-    $client = ClientBuilder::create();
-    $client->setHosts([ep_get_host()]); // get host dynamically
-    $client = $client->build();
-    $params = [
-        'index' => ep_get_index_name(), // get index dynamically
-        'type' => 'post',
-        'body' => $data->get_body()
-    ];
-    $response = $client->search( $params );
-    return $response;
+    
+    //replace double quotes with spaces
+    $q = str_replace('"', ' ', $data->get_param('q')); 
+
+    //get the search query from elasticpress the one we removed fro client
+    $features = ElasticPress\Features::factory();
+    $qry = $features->get_registered_feature('autosuggest')->generate_search_query();
+
+    //replace the search text with the query placeholder
+    $qry = str_replace($qry['placeholder'], $q, $qry['body']);
+
+    //get elasticsearch host and index name from elasticpress
+    $host = ElasticPress\Utils\get_host();
+    $index = ElasticPress\Indexables::factory()->get( 'post' )->get_index_name();
+
+    //run the elastic query
+    $request = wp_remote_request( "{$host}$index/_search", array('method'=>'POST', 'body'=>$qry, 'headers'=>array('Content-Type' => 'application/json'))); 
+
+    return json_decode(wp_remote_retrieve_body( $request ));
 }
